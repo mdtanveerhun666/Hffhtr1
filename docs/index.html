@@ -1,0 +1,132 @@
+final android.webkit.WebView webview1 = (android.webkit.WebView) findViewById(R.id.webview1);
+final android.content.SharedPreferences sp = getSharedPreferences("app_data", android.content.Context.MODE_PRIVATE);
+final String device_id = android.provider.Settings.Secure.getString(getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
+
+// Browser Core Settings for Login & Uploads
+webview1.getSettings().setJavaScriptEnabled(true);
+webview1.getSettings().setDomStorageEnabled(true); // Saves login sessions
+webview1.getSettings().setDatabaseEnabled(true);
+webview1.getSettings().setAllowFileAccess(true);
+webview1.getSettings().setAllowContentAccess(true);
+webview1.getSettings().setJavaScriptCanOpenWindowsAutomatically(true);
+
+// JavaScript Interface for your specific Download Icon
+webview1.addJavascriptInterface(new Object() {
+    @android.webkit.JavascriptInterface
+    public void showAd(final String url) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url));
+                    startActivity(intent);
+                } catch (Exception e) {}
+            }
+        });
+    }
+}, "Android");
+
+webview1.setWebViewClient(new android.webkit.WebViewClient() {
+
+    // CRITICAL: Hides the link on any error or disconnection
+    @Override
+    public void onReceivedError(android.webkit.WebView view, int errorCode, String description, String failingUrl) {
+        view.loadUrl("about:blank"); // Clears the screen so no link is visible
+        android.widget.Toast.makeText(getApplicationContext(), "Connection Error!", 0).show();
+    }
+
+    @Override
+    public boolean shouldOverrideUrlLoading(android.webkit.WebView view, String url) {
+        // PIN & Status
+        if (url.startsWith("unlock://")) {
+            String enteredPin = url.replace("unlock://", "");
+            MainActivity.this.handleUnlock(enteredPin, sp);
+            return true;
+        }
+        if (url.equals("request://get_status")) {
+            boolean isNew = sp.getString("user_pin", "").equals("");
+            webview1.loadUrl("javascript:setAppMode(" + isNew + ")");
+            return true;
+        }
+
+        // Professional Share
+        if (url.contains("whatsapp.com/send?text=")) {
+            try {
+                String cleanUrl = android.net.Uri.decode(url.substring(url.indexOf("text=") + 5));
+                android.content.Intent shareIntent = new android.content.Intent(android.content.Intent.ACTION_SEND);
+                shareIntent.setType("text/plain");
+                shareIntent.putExtra(android.content.Intent.EXTRA_TEXT, cleanUrl);
+                startActivity(android.content.Intent.createChooser(shareIntent, "Share"));
+                return true;
+            } catch (Exception e) {}
+        }
+
+        // Handle Intents (Social Apps, Customer Service)
+        if (url.startsWith("intent://") || url.startsWith("tel:") || url.startsWith("mailto:")) {
+            try {
+                android.content.Intent intent = android.content.Intent.parseUri(url, android.content.Intent.URI_INTENT_SCHEME);
+                startActivity(intent);
+                return true;
+            } catch (Exception e) {
+                // If app not found, try browser
+                android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url));
+                startActivity(i);
+                return true;
+            }
+        }
+
+        // Default: Open everything else inside the App (Referral links etc)
+        return false;
+    }
+});
+
+// Final Browser Tweaks
+webview1.loadUrl("file:///android_asset/index.html");
+
+fdb_users.child(device_id).addListenerForSingleValueEvent(new ValueEventListener() {
+    @Override
+    public void onDataChange(DataSnapshot _dataSnapshot) {
+        if (!_dataSnapshot.exists()) {
+            java.util.HashMap<String, Object> userData = new java.util.HashMap<>();
+            userData.put("status", "active");
+            fdb_users.child(device_id).updateChildren(userData);
+        }
+    }
+    @Override
+    public void onCancelled(DatabaseError _databaseError) {}
+});
+
+} // End OnCreate
+
+// PIN Handling
+private void handleUnlock(String pin, android.content.SharedPreferences sp) {
+    String savedPin = sp.getString("user_pin", "");
+    if (savedPin.equals("")) {
+        sp.edit().putString("user_pin", pin).apply();
+        android.widget.Toast.makeText(getApplicationContext(), "PIN Saved", 0).show();
+        openMirrorWebsite();
+    } else if (pin.equals(savedPin)) {
+        openMirrorWebsite();
+    }
+}
+
+// Admin Control & Hidden Link Loading
+private void openMirrorWebsite() {
+    fdb_users.child("admin_settings").child("live_link").addListenerForSingleValueEvent(new ValueEventListener() {
+        @Override
+        public void onDataChange(DataSnapshot _dataSnapshot) {
+            if (_dataSnapshot.exists()) {
+                try {
+                    String encrypted = _dataSnapshot.getValue().toString();
+                    byte[] data = android.util.Base64.decode(encrypted, android.util.Base64.DEFAULT);
+                    String realUrl = new String(data, "UTF-8");
+                    final android.webkit.WebView webview1 = (android.webkit.WebView) findViewById(R.id.webview1);
+                    webview1.loadUrl(realUrl);
+                } catch (Exception e) {}
+            }
+        }
+        @Override
+        public void onCancelled(DatabaseError _databaseError) {}
+    });
+}
+{ // Final Bracket
